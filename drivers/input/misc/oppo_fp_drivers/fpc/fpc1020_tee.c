@@ -68,12 +68,13 @@ struct vreg_config {
 
 static const struct vreg_config const vreg_conf[] = {
         { "vdd_io", 1800000UL, 1800000UL, 10000, },
-        { "vmch", 2960000UL, 2960000UL, 10000, },
+       { "vdd_3v", 3000000UL, 3000000UL, 6000, },
 };
 
 struct fpc1020_data {
         struct device *dev;
         int irq_gpio;
+        int rst_gpio;
         int irq_num;
         struct mutex lock;
         bool prepared;
@@ -258,7 +259,11 @@ static ssize_t regulator_enable_set(struct device *dev,
                 return -EINVAL;
         }
         rc = vreg_setup(fpc1020, "vdd_io", enable);
-        rc = vreg_setup(fpc1020, "vmch", enable);
+        if((FP_FPC_1023_GLASS == get_fpsensor_type())){
+                rc = vreg_setup(fpc1020, "vdd_3v", enable);
+				dev_err(fpc1020->dev, "FP_FPC_1023_GLASS vdd\n");
+        }
+
         return rc ? rc : count;
 }
 
@@ -399,13 +404,13 @@ static int fpc1020_probe(struct platform_device *pdev)
                         &&(FP_FPC_1022 != get_fpsensor_type())
                         &&(FP_FPC_1023 != get_fpsensor_type())
                         &&(FP_FPC_1023_GLASS != get_fpsensor_type())
-                        &&(FP_FPC_1270 != get_fpsensor_type())
-                        &&(FP_FPC_1511 != get_fpsensor_type())) {
+                        &&(FP_FPC_1270 != get_fpsensor_type())) {
                 dev_err(dev, "found not fpc sensor\n");
                 rc = -EINVAL;
                 goto ERR_BEFORE_WAKELOCK;
         }
-        dev_info(dev, "found fpc sensor\n");
+        rc = get_fpsensor_type();
+        dev_info(dev, "found fpc sensor type %d\n",  rc);
 
         wake_lock_init(&fpc1020->ttw_wl, WAKE_LOCK_SUSPEND, "fpc_ttw_wl");
         wake_lock_init(&fpc1020->fpc_wl, WAKE_LOCK_SUSPEND, "fpc_wl");
@@ -418,6 +423,17 @@ static int fpc1020_probe(struct platform_device *pdev)
         }
 
         /*dev_info(fpc1020->dev, "fpc1020 requested gpio finished \n");*/
+        rc = fpc1020_request_named_gpio(fpc1020, "fpc,reset-gpio",
+                &fpc1020->rst_gpio);
+        if (rc) {
+                goto ERR_AFTER_WAKELOCK;
+        }
+
+        gpio_set_value(fpc1020->rst_gpio, 0);
+        udelay(FPC1020_RESET_HIGH2_US);
+
+        gpio_set_value(fpc1020->rst_gpio, 1);
+        udelay(FPC1020_RESET_HIGH1_US);
 
         irqf = IRQF_TRIGGER_RISING | IRQF_ONESHOT;
         mutex_init(&fpc1020->lock);
@@ -447,7 +463,10 @@ static int fpc1020_probe(struct platform_device *pdev)
         }
 
         rc = vreg_setup(fpc1020, "vdd_io", true);
-        rc = vreg_setup(fpc1020, "vmch", true);
+        if((FP_FPC_1023_GLASS == get_fpsensor_type())){
+                rc = vreg_setup(fpc1020, "vdd_3v", true);
+                dev_err(fpc1020->dev, "FP_FPC_1023_GLASS vdd\n");				
+        }
         if (rc) {
                 dev_err(fpc1020->dev,
                                 "vreg_setup failed.\n");
